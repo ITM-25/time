@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>World Time</title>
+  <style>
+    :root {
+      --bg: #e6e0cf;
+      --ink: #637b89;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      box-sizing: border-box;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Courier New", Courier, monospace;
+      overflow: hidden;
+    }
+
+    #screen {
+      margin: 0;
+      white-space: pre;
+      font-size: 12px;
+      line-height: 1.1;
+      color: var(--ink);
+      overflow: hidden;
+      max-width: 100%;
+      max-height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <pre id="screen" aria-label="Terminal style world time panel"></pre>
+
+  <script>
+    const rows = [
+      { city: "Buenos Aires", zone: "America/Argentina/Buenos_Aires", link: "----*" },
+      { city: "Antwerp", zone: "Europe/Brussels", link: "--------*" },
+      { city: "Bangkok", zone: "Asia/Bangkok", link: "------------*" },
+      { city: "New York", zone: "America/New_York", link: "-----------------*" },
+      { city: "Cupertino", zone: "America/Los_Angeles", link: "-----------------------*" }
+    ];
+
+    const screen = document.getElementById("screen");
+    const outerPad = " ";
+    const innerWidth = 59;
+    const innerHeight = 10;
+    const firstClockRow = 2;
+    const cursorRow = 8;
+    const cursorCol = 2;
+    const leftPad = "  ";
+    const cityWidth = 13;
+    const linkGap = "  ";
+    const baseFontPx = 12;
+    const apiBaseUrl = "https://worldtimeapi.org/api/timezone";
+    const syncIntervalMs = 5 * 60 * 1000;
+    const zoneState = Object.fromEntries(
+      rows.map((row) => [
+        row.zone,
+        { ready: false, baseWallMs: 0, syncedAtPerfMs: 0 }
+      ])
+    );
+    let cursorVisible = true;
+
+    function pad2(value) {
+      return String(value).padStart(2, "0");
+    }
+
+    function formatWallClock(wallMs) {
+      const date = new Date(wallMs);
+      const hh = pad2(date.getUTCHours());
+      const mm = pad2(date.getUTCMinutes());
+      const ss = pad2(date.getUTCSeconds());
+      return `${hh}:${mm}:${ss}`;
+    }
+
+    function getTime(zone) {
+      const state = zoneState[zone];
+      if (!state || !state.ready) return "--:--:--";
+      const elapsedMs = performance.now() - state.syncedAtPerfMs;
+      return formatWallClock(state.baseWallMs + elapsedMs);
+    }
+
+    async function syncZoneFromApi(zone) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 7000);
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/${zone}`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        const unixSeconds = Number(payload.unixtime);
+        const rawOffsetSeconds = Number(payload.raw_offset);
+        const dstOffsetSeconds = Number(payload.dst_offset);
+        const offsetSeconds = rawOffsetSeconds + dstOffsetSeconds;
+        const wallClockMs = (unixSeconds + offsetSeconds) * 1000;
+
+        if (!Number.isFinite(wallClockMs)) {
+          throw new Error("Invalid API payload");
+        }
+
+        zoneState[zone] = {
+          ready: true,
+          baseWallMs: wallClockMs,
+          syncedAtPerfMs: performance.now()
+        };
+      } catch (error) {
+        console.error(`Time sync failed for ${zone}:`, error);
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    async function syncAllZonesFromApi() {
+      await Promise.all(rows.map((row) => syncZoneFromApi(row.zone)));
+      render();
+      fitToViewport();
+    }
+
+    function buildClockLine(row) {
+      return `${leftPad}${row.city.padEnd(cityWidth)}${linkGap}${row.link} ${getTime(row.zone)}`;
+    }
+
+    function render() {
+      const lines = Array.from({ length: innerHeight }, () => " ".repeat(innerWidth));
+
+      rows.forEach((row, index) => {
+        lines[firstClockRow + index] = buildClockLine(row).padEnd(innerWidth, " ").slice(0, innerWidth);
+      });
+
+      if (cursorVisible) {
+        const cursorLine = Array.from({ length: innerWidth }, () => " ");
+        cursorLine[cursorCol] = "|";
+        lines[cursorRow] = cursorLine.join("");
+      }
+
+      const top = `${outerPad}${"_".repeat(innerWidth + 2)}`;
+      const body = lines.map((line) => `${outerPad}|${line}|`);
+      const bottom = `${outerPad}|${"_".repeat(innerWidth)}|`;
+      screen.textContent = [top, ...body, bottom].join("\n");
+
+      cursorVisible = !cursorVisible;
+    }
+
+    function fitToViewport() {
+      screen.style.fontSize = `${baseFontPx}px`;
+
+      const bodyStyle = getComputedStyle(document.body);
+      const padX = parseFloat(bodyStyle.paddingLeft) + parseFloat(bodyStyle.paddingRight);
+      const padY = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
+      const availableWidth = window.innerWidth - padX;
+      const availableHeight = window.innerHeight - padY;
+      const contentWidth = screen.scrollWidth;
+      const contentHeight = screen.scrollHeight;
+      const scale = Math.min(availableWidth / contentWidth, availableHeight / contentHeight, 1);
+
+      screen.style.fontSize = `${(baseFontPx * scale).toFixed(3)}px`;
+    }
+
+    render();
+    fitToViewport();
+    window.addEventListener("resize", fitToViewport);
+    syncAllZonesFromApi();
+    setInterval(syncAllZonesFromApi, syncIntervalMs);
+    setInterval(render, 1000);
+  </script>
+</body>
+</html>
