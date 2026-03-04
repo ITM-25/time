@@ -110,7 +110,8 @@
       const top = `${outerPad}${"_".repeat(innerWidth + 2)}`;
       const body = lines.map((line) => `${outerPad}|${line}|`);
       const bottom = `${outerPad}|${"_".repeat(innerWidth)}|`;
-      screen.textContent = [top, ...body, bottom].join("\n");
+      const revision = `${outerPad}rev 2`;
+      screen.textContent = [top, ...body, bottom, revision].join("\n");
 
       cursorVisible = !cursorVisible;
     }
