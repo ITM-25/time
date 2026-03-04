@@ -18,9 +18,10 @@
 
     body {
       display: grid;
-      place-items: center;
+      justify-items: center;
+      align-content: start;
       box-sizing: border-box;
-      padding: 16px;
+      padding: 40px 16px 16px;
       background: var(--bg);
       color: var(--ink);
       font-family: "Courier New", Courier, monospace;
@@ -62,75 +63,31 @@
     const cityWidth = 13;
     const linkGap = "  ";
     const baseFontPx = 12;
-    const apiBaseUrl = "https://worldtimeapi.org/api/timezone";
-    const syncIntervalMs = 5 * 60 * 1000;
-    const zoneState = Object.fromEntries(
-      rows.map((row) => [
-        row.zone,
-        { ready: false, baseWallMs: 0, syncedAtPerfMs: 0 }
-      ])
-    );
+    const timeFormatters = new Map();
     let cursorVisible = true;
 
-    function pad2(value) {
-      return String(value).padStart(2, "0");
-    }
+    function getFormatter(zone) {
+      let formatter = timeFormatters.get(zone);
+      if (formatter) return formatter;
 
-    function formatWallClock(wallMs) {
-      const date = new Date(wallMs);
-      const hh = pad2(date.getUTCHours());
-      const mm = pad2(date.getUTCMinutes());
-      const ss = pad2(date.getUTCSeconds());
-      return `${hh}:${mm}:${ss}`;
+      formatter = new Intl.DateTimeFormat("en-GB", {
+        timeZone: zone,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      });
+      timeFormatters.set(zone, formatter);
+      return formatter;
     }
 
     function getTime(zone) {
-      const state = zoneState[zone];
-      if (!state || !state.ready) return "--:--:--";
-      const elapsedMs = performance.now() - state.syncedAtPerfMs;
-      return formatWallClock(state.baseWallMs + elapsedMs);
-    }
-
-    async function syncZoneFromApi(zone) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 7000);
-
       try {
-        const response = await fetch(`${apiBaseUrl}/${zone}`, {
-          cache: "no-store",
-          signal: controller.signal
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const payload = await response.json();
-        const unixSeconds = Number(payload.unixtime);
-        const rawOffsetSeconds = Number(payload.raw_offset);
-        const dstOffsetSeconds = Number(payload.dst_offset);
-        const offsetSeconds = rawOffsetSeconds + dstOffsetSeconds;
-        const wallClockMs = (unixSeconds + offsetSeconds) * 1000;
-
-        if (!Number.isFinite(wallClockMs)) {
-          throw new Error("Invalid API payload");
-        }
-
-        zoneState[zone] = {
-          ready: true,
-          baseWallMs: wallClockMs,
-          syncedAtPerfMs: performance.now()
-        };
+        return getFormatter(zone).format(new Date());
       } catch (error) {
-        console.error(`Time sync failed for ${zone}:`, error);
-      } finally {
-        clearTimeout(timeout);
+        console.error(`Time format failed for ${zone}:`, error);
+        return "--:--:--";
       }
-    }
-
-    async function syncAllZonesFromApi() {
-      await Promise.all(rows.map((row) => syncZoneFromApi(row.zone)));
-      render();
-      fitToViewport();
     }
 
     function buildClockLine(row) {
@@ -153,7 +110,8 @@
       const top = `${outerPad}${"_".repeat(innerWidth + 2)}`;
       const body = lines.map((line) => `${outerPad}|${line}|`);
       const bottom = `${outerPad}|${"_".repeat(innerWidth)}|`;
-      screen.textContent = [top, ...body, bottom].join("\n");
+      const revision = `${outerPad}rev 3`;
+      screen.textContent = [top, ...body, bottom, revision].join("\n");
 
       cursorVisible = !cursorVisible;
     }
@@ -176,8 +134,6 @@
     render();
     fitToViewport();
     window.addEventListener("resize", fitToViewport);
-    syncAllZonesFromApi();
-    setInterval(syncAllZonesFromApi, syncIntervalMs);
     setInterval(render, 1000);
   </script>
 </body>
